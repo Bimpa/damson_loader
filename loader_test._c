@@ -1,0 +1,107 @@
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/time.h>
+
+#include "loader.h"
+
+#define GV_SIZE 100
+#define EV_SIZE 1000
+
+#define NUMBER_OF_SEQUENTIAL_NODES 10
+#define PROB_OF_CONNECTION 0.5
+
+double lerp(double a, double b, double x);
+void clusteredRandNoiseFill(int* mem, unsigned int size, unsigned int width, double cutoff);
+
+/**
+ * Test program for the loader.
+ * Loads a number of sequential nodes using a mapping file in the format
+ *     spinnaker_ip chips_width chips_height
+ *     node_number chip_x chip_y chip_z
+ *     node_number chip_x chip_y chip_z
+ *     node_number chip_x chip_y chip_z
+ *     ...
+ * GV and EV are filled with clustered random random data to demonstrate
+ * sparse values from Alias definitions. This tests the intelligent memory
+ * write of the SpiNNaker runtime API.
+ */
+int main(int argc, char* argv[]) {
+	int n, i;
+	int* gv;
+	int* ev;
+	InterruptVector* iv;
+
+	printf("Initialising Loader Test!\n");
+	InitLoader("mapping.map");
+
+	//create some fake damson node data
+	char* prototype_name = "test";
+	gv = malloc(sizeof(int)*GV_SIZE);
+	ev = malloc(sizeof(int)*EV_SIZE);
+	iv = malloc(sizeof(InterruptVector)*NUMBER_OF_SEQUENTIAL_NODES);
+
+	for (n=1; n<=NUMBER_OF_SEQUENTIAL_NODES; n++){
+		int interrupts;
+		interrupts = 0;
+
+		//fill GV with random clustered data
+		memset(gv, 0 , GV_SIZE*sizeof(int));
+		clusteredRandNoiseFill(gv, GV_SIZE, 10, 0.5);
+
+		//fill EX with random clustered data
+		memset(ev, 0 , EV_SIZE*sizeof(int));
+		clusteredRandNoiseFill(ev, EV_SIZE, 10, 0.2);
+
+		//create an interrupt vector, assumes (for now) that the runtime system maps iVectors to code sections
+		memset(iv, 0, sizeof(InterruptVector)*NUMBER_OF_SEQUENTIAL_NODES);
+		for (i=1; i<=NUMBER_OF_SEQUENTIAL_NODES; i++){
+			double d;
+			d = (double)rand()/RAND_MAX;
+			if (d<PROB_OF_CONNECTION){
+				iv[interrupts].iNumber = i;
+				iv[interrupts].iVector = rand()%10;
+				interrupts++;
+			}
+		}
+
+		//load node!
+		LoadNode(n, prototype_name, gv, GV_SIZE, ev, EV_SIZE, iv, interrupts);
+		//validate node by checking the data on the device is what is expected and that the core is still responding
+		CheckNode(n, prototype_name, gv, GV_SIZE, ev, EV_SIZE, iv, interrupts);
+	}
+
+	free(gv);
+	free(ev);
+	free(iv);
+
+	SpiNNakerStart();
+
+	printf("Loader Test Complete\n");
+
+	return 0;
+}
+
+double lerp(double a, double b, double x){
+	return a+(x*(b-a));
+}
+
+void clusteredRandNoiseFill(int* mem, unsigned int size, unsigned int width, double cutoff){
+	unsigned int i, j;
+	double p, n, v;
+
+	p = (double)rand()/RAND_MAX;
+	for (i=0; i<size; i+=width){
+		n = (double)rand()/RAND_MAX;
+		for (j=0; (j<width)&&((i+j)<size); j++){
+			v = lerp(p, n, (double)j/(double)width);
+			if (v < cutoff){
+				mem[i+j] = rand();
+			}
+			//printf("%i = %f\n", i+j, v);
+		}
+		p = n;
+	}
+}
